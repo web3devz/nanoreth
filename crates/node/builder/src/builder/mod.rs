@@ -16,6 +16,7 @@ use reth_cli_util::get_secret_key;
 use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
 use reth_engine_tree::tree::TreeConfig;
 use reth_exex::ExExContext;
+use reth_hyperliquid_types::PrecompilesCache;
 use reth_network::{
     transactions::TransactionsManagerConfig, NetworkBuilder, NetworkConfig, NetworkConfigBuilder,
     NetworkHandle, NetworkManager, NetworkPrimitives,
@@ -474,6 +475,14 @@ where
         Self { builder: self.builder.on_rpc_started(hook), task_executor: self.task_executor }
     }
 
+    /// Add precompiles cache <hyperliquid>
+    pub fn add_precompiles_cache(self, precompile_cache: PrecompilesCache) -> Self {
+        Self {
+            builder: self.builder.add_precompiles_cache(precompile_cache),
+            task_executor: self.task_executor,
+        }
+    }
+
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
@@ -587,6 +596,8 @@ pub struct BuilderContext<Node: FullNodeTypes> {
     pub(crate) executor: TaskExecutor,
     /// Config container
     pub(crate) config_container: WithConfigs<<Node::Types as NodeTypes>::ChainSpec>,
+    /// Shared state
+    pub(crate) shared_state: Option<HyperliquidSharedState>,
 }
 
 impl<Node: FullNodeTypes> BuilderContext<Node> {
@@ -596,8 +607,9 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
         provider: Node::Provider,
         executor: TaskExecutor,
         config_container: WithConfigs<<Node::Types as NodeTypes>::ChainSpec>,
+        shared_state: Option<HyperliquidSharedState>,
     ) -> Self {
-        Self { head, provider, executor, config_container }
+        Self { head, provider, executor, config_container, shared_state }
     }
 
     /// Returns the configured provider to interact with the blockchain.
@@ -753,6 +765,14 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
 
     pub fn ingest_dir(&self) -> PathBuf {
         self.config().ingest_dir.clone().expect("ingest dir not set")
+    }
+
+    pub fn local_ingest_dir(&self) -> PathBuf {
+        self.config().local_ingest_dir.clone().expect("local ingest dir not set")
+    }
+
+    pub fn shared_state(&self) -> Option<HyperliquidSharedState> {
+        self.shared_state.clone()
     }
 }
 

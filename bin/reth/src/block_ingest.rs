@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use alloy_consensus::{BlockBody, BlockHeader, Transaction};
@@ -10,22 +12,90 @@ use alloy_rpc_types::engine::{
 use jsonrpsee::http_client::{transport::HttpBackend, HttpClient};
 use reth::network::PeersHandleProvider;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
-use reth_node_api::{FullNodeComponents, PayloadTypes};
+use reth_hyperliquid_types::PrecompilesCache;
+use reth_node_api::{Block, FullNodeComponents, PayloadTypes};
 use reth_node_builder::EngineTypes;
 use reth_node_builder::NodeTypesWithEngine;
 use reth_node_builder::{rpc::RethRpcAddOns, FullNode};
 use reth_payload_builder::{EthBuiltPayload, EthPayloadBuilderAttributes, PayloadId};
 use reth_primitives::{Transaction as TypedTransaction, TransactionSigned};
-use reth_provider::{BlockHashReader, StageCheckpointReader};
+use reth_provider::{BlockHashReader, BlockReader, StageCheckpointReader};
 use reth_rpc_api::EngineApiClient;
 use reth_rpc_layer::AuthClientService;
 use reth_stages::StageId;
+use serde::Deserialize;
+use time::{format_description, Duration, OffsetDateTime};
+use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::serialized::{BlockAndReceipts, EvmBlock};
 use crate::spot_meta::erc20_contract_to_spot_token;
 
-pub(crate) struct BlockIngest(pub PathBuf);
+/// Poll interval when tailing an *open* hourly file.
+const TAIL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
+/// Sub‑directory that contains day folders (inside `local_ingest_dir`).
+const HOURLY_SUBDIR: &str = "hourly";
+
+pub(crate) struct BlockIngest {
+    pub ingest_dir: PathBuf,
+    pub local_ingest_dir: Option<PathBuf>,
+    pub local_blocks_cache: Arc<Mutex<BTreeMap<u64, BlockAndReceipts>>>, // height → block
+    pub precompiles_cache: PrecompilesCache,
+}
+
+#[derive(Deserialize)]
+struct LocalBlockAndReceipts(String, BlockAndReceipts);
+
+struct ScanResult {
+    next_expected_height: u64,
+    new_blocks: Vec<BlockAndReceipts>,
+}
+
+fn scan_hour_file(path: &Path, last_line: &mut usize, start_height: u64) -> ScanResult {
+    // info!(
+    //     "Scanning hour block file @ {:?} for height [{:?}] | Last Line {:?}",
+    //     path, start_height, last_line
+    // );
+    let file = std::fs::File::open(path).expect("Failed to open hour file path");
+    let reader = BufReader::new(file);
+
+    let mut new_blocks = Vec::<BlockAndReceipts>::new();
+    let mut last_height = start_height;
+    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>().unwrap();
+    let skip = if *last_line == 0 { 0 } else { (last_line.clone()) - 1 };
+
+    for (line_idx, line) in lines.iter().enumerate().skip(skip) {
+        // Safety check ensuring efficiency
+        if line_idx < *last_line {
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let LocalBlockAndReceipts(_block_timestamp, parsed_block): LocalBlockAndReceipts =
+            serde_json::from_str(&line).expect("Failed to parse local block and receipts");
+
+        let height = match &parsed_block.block {
+            EvmBlock::Reth115(b) => {
+                let block_number = b.header().number() as u64;
+                // Another check to ensure not returning an older block
+                if block_number < start_height {
+                    continue;
+                }
+                block_number
+            }
+        };
+        // println!("Iterating block height {:?} | Line {}", height, line_idx);
+        if height >= start_height {
+            last_height = last_height.max(height);
+            new_blocks.push(parsed_block);
+            *last_line = line_idx;
+        }
+    }
+
+    ScanResult { next_expected_height: last_height + 1, new_blocks }
+}
 
 async fn submit_payload<Engine: PayloadTypes + EngineTypes>(
     engine_api_client: &HttpClient<AuthClientService<HttpBackend>>,
@@ -53,20 +123,116 @@ async fn submit_payload<Engine: PayloadTypes + EngineTypes>(
     Ok(submission.latest_valid_hash.unwrap_or_default())
 }
 
+fn datetime_from_timestamp(ts_sec: u64) -> OffsetDateTime {
+    OffsetDateTime::from_unix_timestamp_nanos((ts_sec as i128) * 1_000 * 1_000_000)
+        .expect("timestamp out of range")
+}
+
+fn date_from_datetime(dt: OffsetDateTime) -> String {
+    dt.format(&format_description::parse("[year][month][day]").unwrap()).unwrap()
+}
+
 impl BlockIngest {
-    pub(crate) fn collect_block(&self, height: u64) -> Option<BlockAndReceipts> {
+    pub(crate) async fn collect_block(&self, height: u64) -> Option<BlockAndReceipts> {
+        // info!("Attempting to collect block @ height [{height}]");
+
+        // Not a one liner (using .or) to include logs
+        if let Some(block) = self.try_collect_local_block(height).await {
+            info!("Returning locally synced block for @ Height [{height}]");
+            return Some(block);
+        } else {
+            self.try_collect_s3_block(height)
+        }
+    }
+
+    pub(crate) fn try_collect_s3_block(&self, height: u64) -> Option<BlockAndReceipts> {
         let f = ((height - 1) / 1_000_000) * 1_000_000;
         let s = ((height - 1) / 1_000) * 1_000;
-        let path = format!("{}/{f}/{s}/{height}.rmp.lz4", self.0.to_string_lossy());
+        let path = format!("{}/{f}/{s}/{height}.rmp.lz4", self.ingest_dir.to_string_lossy());
         if std::path::Path::new(&path).exists() {
             let file = std::fs::File::open(path).unwrap();
             let file = std::io::BufReader::new(file);
             let mut decoder = lz4_flex::frame::FrameDecoder::new(file);
             let blocks: Vec<BlockAndReceipts> = rmp_serde::from_read(&mut decoder).unwrap();
+            info!("Returning s3 synced block for @ Height [{height}]");
             Some(blocks[0].clone())
         } else {
             None
         }
+    }
+
+    async fn try_collect_local_block(&self, height: u64) -> Option<BlockAndReceipts> {
+        let mut u_cache = self.local_blocks_cache.lock().await;
+        u_cache.remove(&height)
+    }
+
+    async fn start_local_ingest_loop(&self, current_head: u64, current_ts: u64) {
+        let Some(root) = &self.local_ingest_dir else { return }; // nothing to do
+        let root = root.to_owned();
+        let cache = self.local_blocks_cache.clone();
+        let precompiles_cache = self.precompiles_cache.clone();
+
+        tokio::spawn(async move {
+            let mut next_height = current_head;
+            let mut dt = datetime_from_timestamp(current_ts)
+                .replace_minute(0)
+                .unwrap()
+                .replace_second(0)
+                .unwrap()
+                .replace_nanosecond(0)
+                .unwrap();
+
+            let mut hour = dt.hour();
+            let mut day_str = date_from_datetime(dt);
+            let mut last_line = 0;
+
+            loop {
+                let hour_file = root.join(HOURLY_SUBDIR).join(&day_str).join(format!("{hour}"));
+
+                if hour_file.exists() {
+                    let ScanResult { next_expected_height, new_blocks } =
+                        scan_hour_file(&hour_file, &mut last_line, next_height);
+                    if !new_blocks.is_empty() {
+                        let mut u_cache = cache.lock().await;
+                        let mut u_pre_cache = precompiles_cache.lock();
+                        for blk in new_blocks {
+                            let precompiles = blk.read_precompile_calls.clone();
+                            let h = match &blk.block {
+                                EvmBlock::Reth115(b) => {
+                                    let block_number = b.header().number() as u64;
+                                    block_number
+                                }
+                            };
+                            u_cache.insert(h, blk);
+                            u_pre_cache.insert(h, precompiles);
+                        }
+                        next_height = next_expected_height;
+                    }
+                }
+
+                // Decide whether the *current* hour file is closed (past) or
+                // still live. If it’s in the past by > 1 h, move to next hour;
+                // otherwise, keep tailing the same file.
+                let now = OffsetDateTime::now_utc();
+
+                // println!("Date Current {:?}", dt);
+                // println!("Now Current {:?}", now);
+
+                if dt + Duration::HOUR < now {
+                    dt += Duration::HOUR;
+                    hour = dt.hour();
+                    day_str = date_from_datetime(dt);
+                    last_line = 0;
+                    info!(
+                        "Moving to a new file. {:?}",
+                        root.join(HOURLY_SUBDIR).join(&day_str).join(format!("{hour}"))
+                    );
+                    continue;
+                }
+
+                tokio::time::sleep(TAIL_INTERVAL).await;
+            }
+        });
     }
 
     pub(crate) async fn run<Node, Engine, AddOns>(
@@ -96,9 +262,19 @@ impl BlockIngest {
         let engine_api = node.auth_server_handle().http_client();
         let mut evm_map = erc20_contract_to_spot_token(node.chain_spec().chain_id()).await?;
 
+        let current_block_timestamp: u64 = provider
+            .block_by_number(head)
+            .expect("Failed to fetch current block in db")
+            .expect("Block does not exist")
+            .into_header()
+            .timestamp();
+
+        info!("Current height {height}, timestamp {current_block_timestamp}");
+        self.start_local_ingest_loop(height, current_block_timestamp).await;
+
         loop {
-            let Some(original_block) = self.collect_block(height) else {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let Some(original_block) = self.collect_block(height).await else {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 continue;
             };
             let EvmBlock::Reth115(mut block) = original_block.block;
@@ -111,6 +287,7 @@ impl BlockIngest {
                     let BlockBody { transactions, ommers, withdrawals } =
                         std::mem::take(block.body_mut());
                     let mut system_txs = vec![];
+
                     for transaction in original_block.system_txs {
                         let TypedTransaction::Legacy(tx) = &transaction.tx else {
                             panic!("Unexpected transaction type");
@@ -180,10 +357,12 @@ impl BlockIngest {
                     PayloadStatusEnum::Valid,
                 )
                 .await?;
+
                 let current_timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_millis();
+
                 if height % 100 == 0 || current_timestamp - previous_timestamp > 100 {
                     EngineApiClient::<Engine>::fork_choice_updated_v2(
                         &engine_api,

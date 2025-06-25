@@ -21,24 +21,21 @@ use alloc::sync::Arc;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::eth::EthEvmContext;
 pub use alloy_evm::EthEvm;
-use alloy_primitives::bytes::BufMut;
-use alloy_primitives::hex::{FromHex, ToHexExt};
-use alloy_primitives::{Address, B256};
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::Address;
+use alloy_primitives::U256;
 use core::{convert::Infallible, fmt::Debug};
 use parking_lot::RwLock;
 use reth_chainspec::{ChainSpec, EthChainSpec, MAINNET};
 use reth_evm::Database;
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv, EvmEnv, EvmFactory, NextBlockEnvAttributes};
-use reth_hyperliquid_types::{ReadPrecompileInput, ReadPrecompileResult};
+use reth_hyperliquid_types::{PrecompilesCache, ReadPrecompileInput, ReadPrecompileResult};
+use reth_node_builder::HyperliquidSharedState;
+use reth_primitives::SealedBlock;
 use reth_primitives::TransactionSigned;
-use reth_primitives::{SealedBlock, Transaction};
 use reth_revm::context::result::{EVMError, HaltReason};
-use reth_revm::context::Cfg;
 use reth_revm::handler::EthPrecompiles;
 use reth_revm::inspector::NoOpInspector;
 use reth_revm::interpreter::interpreter::EthInterpreter;
-use reth_revm::precompile::{PrecompileError, PrecompileErrors, Precompiles};
 use reth_revm::MainBuilder;
 use reth_revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
@@ -48,7 +45,6 @@ use reth_revm::{
 use reth_revm::{Context, Inspector, MainContext};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
 
 mod config;
@@ -72,17 +68,24 @@ pub struct EthEvmConfig {
     chain_spec: Arc<ChainSpec>,
     evm_factory: HyperliquidEvmFactory,
     ingest_dir: Option<PathBuf>,
+    shared_state: Option<HyperliquidSharedState>,
 }
 
 impl EthEvmConfig {
     /// Creates a new Ethereum EVM configuration with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
-        Self { chain_spec, ingest_dir: None, evm_factory: Default::default() }
+        Self { chain_spec, ingest_dir: None, evm_factory: Default::default(), shared_state: None }
     }
 
     pub fn with_ingest_dir(mut self, ingest_dir: PathBuf) -> Self {
         self.ingest_dir = Some(ingest_dir.clone());
         self.evm_factory.ingest_dir = Some(ingest_dir);
+        self
+    }
+
+    pub fn with_shared_state(mut self, shared_state: Option<HyperliquidSharedState>) -> Self {
+        self.shared_state = shared_state.clone();
+        self.evm_factory.shared_state = shared_state;
         self
     }
 
@@ -208,9 +211,10 @@ pub(crate) enum EvmBlock {
 #[non_exhaustive]
 pub struct HyperliquidEvmFactory {
     ingest_dir: Option<PathBuf>,
+    shared_state: Option<HyperliquidSharedState>,
 }
 
-pub(crate) fn collect_block(ingest_path: PathBuf, height: u64) -> Option<BlockAndReceipts> {
+pub(crate) fn collect_s3_block(ingest_path: PathBuf, height: u64) -> Option<BlockAndReceipts> {
     let f = ((height - 1) / 1_000_000) * 1_000_000;
     let s = ((height - 1) / 1_000) * 1_000;
     let path = format!("{}/{f}/{s}/{height}.rmp.lz4", ingest_path.to_string_lossy());
@@ -225,6 +229,32 @@ pub(crate) fn collect_block(ingest_path: PathBuf, height: u64) -> Option<BlockAn
     }
 }
 
+pub(crate) fn get_locally_sourced_precompiles_for_height(
+    precompiles_cache: PrecompilesCache,
+    height: u64,
+) -> Option<Vec<(Address, Vec<(ReadPrecompileInput, ReadPrecompileResult)>)>> {
+    let mut u_cache = precompiles_cache.lock();
+    u_cache.remove(&height)
+}
+
+pub(crate) fn collect_block(
+    ingest_path: PathBuf,
+    shared_state: Option<HyperliquidSharedState>,
+    height: u64,
+) -> Option<BlockAndReceipts> {
+    // Attempt to source precompile from the cache that is shared the binary level with the block
+    // ingestor.
+    if let Some(shared_state) = shared_state {
+        if let Some(calls) =
+            get_locally_sourced_precompiles_for_height(shared_state.precompiles_cache, height)
+        {
+            return Some(BlockAndReceipts { read_precompile_calls: calls });
+        }
+    }
+    // Fallback to s3 always
+    collect_s3_block(ingest_path, height)
+}
+
 impl EvmFactory<EvmEnv> for HyperliquidEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>, EthInterpreter>> =
         EthEvm<DB, I, ReplayPrecompile<EthEvmContext<DB>>>;
@@ -234,9 +264,14 @@ impl EvmFactory<EvmEnv> for HyperliquidEvmFactory {
     type Context<DB: Database> = EthEvmContext<DB>;
 
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
-        let cache = collect_block(self.ingest_dir.clone().unwrap(), input.block_env.number)
-            .unwrap()
-            .read_precompile_calls;
+        let block = collect_block(
+            self.ingest_dir.clone().unwrap(),
+            self.shared_state.clone(),
+            input.block_env.number,
+        )
+        .expect("Failed to collect a submitted block. If sourcing locally, make sure your local hl-node is producing blocks.");
+        let cache = block.read_precompile_calls;
+
         let evm = Context::mainnet()
             .with_db(db)
             .with_cfg(input.cfg_env)
