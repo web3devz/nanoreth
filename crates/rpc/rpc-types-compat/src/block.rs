@@ -1,7 +1,7 @@
 //! Compatibility functions for rpc `Block` type.
 
 use crate::transaction::TransactionCompat;
-use alloy_consensus::{BlockHeader, Sealable};
+use alloy_consensus::{BlockHeader, Sealable, Transaction as _};
 use alloy_primitives::U256;
 use alloy_rpc_types_eth::{
     Block, BlockTransactions, BlockTransactionsKind, Header, TransactionInfo,
@@ -38,7 +38,18 @@ pub fn from_block_with_tx_hashes<T, B>(block: RecoveredBlock<B>) -> Block<T, Hea
 where
     B: BlockTrait,
 {
-    let transactions = block.body().transaction_hashes_iter().copied().collect();
+    let transactions = block
+        .body()
+        .transactions_iter()
+        .filter(move |&tx| {
+            if is_in_hl_node_compliant_mode() {
+                return !matches!(tx.gas_price(), Some(0));
+            }
+
+            true
+        })
+        .map(|tx| *tx.tx_hash())
+        .collect();
     let rlp_length = block.rlp_length();
     let (header, body) = block.into_sealed_block().split_sealed_header_body();
     from_block_with_transactions::<T, B>(
@@ -68,8 +79,18 @@ where
     let block_length = block.rlp_length();
     let block_hash = Some(block.hash());
 
+    let is_in_hl_node_compliant_mode = is_in_hl_node_compliant_mode();
+
     let transactions = block
         .transactions_recovered()
+        .filter(move |tx| {
+            if is_in_hl_node_compliant_mode {
+                let gas_price = tx.clone_tx().gas_price();
+                return !matches!(gas_price, Some(0));
+            }
+
+            true
+        })
         .enumerate()
         .map(|(idx, tx)| {
             let tx_info = TransactionInfo {
@@ -91,6 +112,10 @@ where
         body,
         BlockTransactions::Full(transactions),
     ))
+}
+
+fn is_in_hl_node_compliant_mode() -> bool {
+    std::env::var("HL_NODE_COMPLIANT").is_ok()
 }
 
 #[inline]

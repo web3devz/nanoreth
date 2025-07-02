@@ -27,9 +27,14 @@ where
     let mut all_logs = Vec::new();
     // Tracks the index of a log in the entire block.
     let mut log_index: u64 = 0;
+    let is_in_hl_node_compliant_mode = is_in_hl_node_compliant_mode();
     // Iterate over transaction hashes and receipts and append matching logs.
     for (receipt_idx, (tx_hash, receipt)) in tx_hashes_and_receipts.into_iter().enumerate() {
         for log in receipt.logs() {
+            if is_in_hl_node_compliant_mode && receipt.cumulative_gas_used() == 0 {
+                continue;
+            }
+
             if log_matches_filter(block_num_hash, log, filter) {
                 let log = Log {
                     inner: log.clone(),
@@ -59,6 +64,10 @@ pub enum ProviderOrBlock<'a, P: BlockReader> {
     Block(Arc<RecoveredBlock<ProviderBlock<P>>>),
 }
 
+fn is_in_hl_node_compliant_mode() -> bool {
+    std::env::var("HL_NODE_COMPLIANT").is_ok()
+}
+
 /// Appends all matching logs of a block's receipts.
 /// If the log matches, look up the corresponding transaction hash.
 pub fn append_matching_block_logs<P>(
@@ -81,12 +90,18 @@ where
     // prevents re-querying the block body indices.
     let mut loaded_first_tx_num = None;
 
+    let is_in_hl_node_compliant_mode = is_in_hl_node_compliant_mode();
+
     // Iterate over receipts and append matching logs.
     for (receipt_idx, receipt) in receipts.iter().enumerate() {
         // The transaction hash of the current receipt.
         let mut transaction_hash = None;
 
         for log in receipt.logs() {
+            if is_in_hl_node_compliant_mode && receipt.cumulative_gas_used() == 0 {
+                continue;
+            }
+
             if log_matches_filter(block_num_hash, log, filter) {
                 // if this is the first match in the receipt's logs, look up the transaction hash
                 if transaction_hash.is_none() {
@@ -146,13 +161,13 @@ pub fn log_matches_filter(
     log: &alloy_primitives::Log,
     params: &FilteredParams,
 ) -> bool {
-    if params.filter.is_some() &&
-        (!params.filter_block_range(block.number) ||
-            !params.filter_block_hash(block.hash) ||
-            !params.filter_address(&log.address) ||
-            !params.filter_topics(log.topics()))
+    if params.filter.is_some()
+        && (!params.filter_block_range(block.number)
+            || !params.filter_block_hash(block.hash)
+            || !params.filter_address(&log.address)
+            || !params.filter_topics(log.topics()))
     {
-        return false
+        return false;
     }
     true
 }

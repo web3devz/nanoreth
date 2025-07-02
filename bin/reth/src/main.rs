@@ -31,6 +31,15 @@ struct HyperliquidExtArgs {
     /// Forward eth_call and eth_estimateGas to the upstream RPC.
     #[arg(long)]
     pub forward_call: bool,
+
+    /// Enable hl-node compliant mode.
+    ///
+    /// This option
+    /// 1. filters out system transactions from block transaction list.
+    /// 2. filters out logs that are not from the block's transactions.
+    /// 3. filters out logs and transactions from subscription.
+    #[arg(long, default_value = "false")]
+    pub hl_node_compliant: bool,
 }
 
 fn main() {
@@ -46,6 +55,11 @@ fn main() {
 
     if let Err(err) = Cli::<EthereumChainSpecParser, HyperliquidExtArgs>::parse().run(
         |builder, ext_args| async move {
+            if ext_args.hl_node_compliant {
+                info!(target: "reth::cli", "hl-node compliant mode enabled");
+                std::env::set_var("HL_NODE_COMPLIANT", "true");
+            }
+
             let ingest_dir = builder.config().ingest_dir.clone().expect("ingest dir not set");
             let local_ingest_dir = builder.config().local_ingest_dir.clone();
             info!(target: "reth::cli", "Launching node");
