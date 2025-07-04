@@ -149,16 +149,11 @@ impl BlockIngest {
         let f = ((height - 1) / 1_000_000) * 1_000_000;
         let s = ((height - 1) / 1_000) * 1_000;
         let path = format!("{}/{f}/{s}/{height}.rmp.lz4", self.ingest_dir.to_string_lossy());
-        if std::path::Path::new(&path).exists() {
-            let file = std::fs::File::open(path).unwrap();
-            let file = std::io::BufReader::new(file);
-            let mut decoder = lz4_flex::frame::FrameDecoder::new(file);
-            let blocks: Vec<BlockAndReceipts> = rmp_serde::from_read(&mut decoder).unwrap();
-            info!("Returning s3 synced block for @ Height [{height}]");
-            Some(blocks[0].clone())
-        } else {
-            None
-        }
+        let file = std::fs::read(path).ok()?;
+        let mut decoder = lz4_flex::frame::FrameDecoder::new(&file[..]);
+        let blocks: Vec<BlockAndReceipts> = rmp_serde::from_read(&mut decoder).unwrap();
+        info!("Returning s3 synced block for @ Height [{height}]");
+        Some(blocks[0].clone())
     }
 
     async fn try_collect_local_block(&self, height: u64) -> Option<BlockAndReceipts> {

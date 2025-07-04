@@ -218,15 +218,10 @@ pub(crate) fn collect_s3_block(ingest_path: PathBuf, height: u64) -> Option<Bloc
     let f = ((height - 1) / 1_000_000) * 1_000_000;
     let s = ((height - 1) / 1_000) * 1_000;
     let path = format!("{}/{f}/{s}/{height}.rmp.lz4", ingest_path.to_string_lossy());
-    if std::path::Path::new(&path).exists() {
-        let file = std::fs::File::open(path).unwrap();
-        let file = std::io::BufReader::new(file);
-        let mut decoder = lz4_flex::frame::FrameDecoder::new(file);
-        let blocks: Vec<BlockAndReceipts> = rmp_serde::from_read(&mut decoder).unwrap();
-        Some(blocks[0].clone())
-    } else {
-        None
-    }
+    let file = std::fs::read(path).ok()?;
+    let mut decoder = lz4_flex::frame::FrameDecoder::new(&file[..]);
+    let blocks: Vec<BlockAndReceipts> = rmp_serde::from_read(&mut decoder).unwrap();
+    Some(blocks[0].clone())
 }
 
 pub(crate) fn get_locally_sourced_precompiles_for_height(
