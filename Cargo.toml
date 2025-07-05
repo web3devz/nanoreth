@@ -538,6 +538,7 @@ url = { version = "2.3", default-features = false }
 zstd = "0.13"
 byteorder = "1"
 mini-moka = "0.10"
+ureq = "3.0.12"
 
 # metrics
 metrics = "0.24.0"

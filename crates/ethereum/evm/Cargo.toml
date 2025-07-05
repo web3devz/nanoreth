@@ -38,6 +38,8 @@ lz4_flex.workspace = true
 
 reth-hyperliquid-types.workspace = true
 parking_lot.workspace = true
+ureq.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 reth-testing-utils.workspace = true
