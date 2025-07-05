@@ -8,7 +8,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_consensus::{Header, Transaction};
 use alloy_eips::{eip4895::Withdrawals, eip6110, eip7685::Requests};
 use alloy_evm::FromRecoveredTx;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{address, hex, Address, B256};
 use reth_chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks, MAINNET};
 use reth_evm::{
     execute::{
@@ -24,7 +24,9 @@ use reth_primitives::{
     EthPrimitives, Receipt, Recovered, RecoveredBlock, SealedBlock, TransactionSigned,
 };
 use reth_primitives_traits::{transaction::signed::is_impersonated_tx, NodePrimitives};
-use reth_revm::{context_interface::result::ResultAndState, db::State, DatabaseCommit};
+use reth_revm::{
+    context_interface::result::ResultAndState, db::State, state::Bytecode, DatabaseCommit,
+};
 
 /// Factory for [`EthExecutionStrategy`].
 #[derive(Debug, Clone)]
@@ -136,10 +138,15 @@ pub struct EthExecutionStrategy<'a, Evm> {
     gas_used: u64,
 }
 
-impl<'a, Evm> EthExecutionStrategy<'a, Evm> {
+impl<'a, 'db, DB, E> EthExecutionStrategy<'a, E>
+where
+    DB: Database + 'db,
+    E: Evm<DB = &'db mut State<DB>>,
+    E::Tx: FromRecoveredTx<TransactionSigned>,
+{
     /// Creates a new [`EthExecutionStrategy`]
     pub fn new(
-        evm: Evm,
+        evm: E,
         input: impl Into<EthBlockExecutionInput<'a>>,
         chain_spec: &'a ChainSpec,
     ) -> Self {
@@ -151,6 +158,34 @@ impl<'a, Evm> EthExecutionStrategy<'a, Evm> {
             gas_used: 0,
             system_caller: SystemCaller::new(chain_spec),
         }
+    }
+
+    fn deploy_corewriter_contract(&mut self, block_number: u64) -> Result<(), BlockExecutionError> {
+        const COREWRITER_CONTRACT_ADDRESS: Address =
+            address!("0x3333333333333333333333333333333333333333");
+        const COREWRITER_BYTECODE: &[u8] = &hex!("608060405234801561000f575f5ffd5b5060043610610029575f3560e01c806317938e131461002d575b5f5ffd5b61004760048036038101906100429190610123565b610049565b005b5f5f90505b61019081101561006557808060010191505061004e565b503373ffffffffffffffffffffffffffffffffffffffff167f8c7f585fb295f7eb1e6aeb8fba61b23a4fe60beda405f0045073b185c74412e383836040516100ae9291906101c8565b60405180910390a25050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f8401126100e3576100e26100c2565b5b8235905067ffffffffffffffff811115610100576100ff6100c6565b5b60208301915083600182028301111561011c5761011b6100ca565b5b9250929050565b5f5f60208385031215610139576101386100ba565b5b5f83013567ffffffffffffffff811115610156576101556100be565b5b610162858286016100ce565b92509250509250929050565b5f82825260208201905092915050565b828183375f83830152505050565b5f601f19601f8301169050919050565b5f6101a7838561016e565b93506101b483858461017e565b6101bd8361018c565b840190509392505050565b5f6020820190508181035f8301526101e181848661019c565b9050939250505056fea2646970667358221220f01517e1fbaff8af4bd72cb063cccecbacbb00b07354eea7dd52265d355474fb64736f6c634300081c0033");
+
+        let corewriter_enabled_block_number: u64 =
+            std::env::var("COREWRITER_ENABLED_BLOCK_NUMBER").unwrap().parse().unwrap();
+
+        if block_number != corewriter_enabled_block_number {
+            return Ok(());
+        }
+
+        let bytecode = Bytecode::new_raw(COREWRITER_BYTECODE.into());
+        let account = self
+            .evm
+            .db_mut()
+            .load_cache_account(COREWRITER_CONTRACT_ADDRESS)
+            .map_err(BlockExecutionError::other)?;
+
+        let mut info = account.account_info().unwrap_or_default();
+        info.code_hash = bytecode.hash_slow();
+        info.code = Some(bytecode);
+
+        let transition = account.change(info, Default::default());
+        self.evm.db_mut().apply_transition(vec![(COREWRITER_CONTRACT_ADDRESS, transition)]);
+        Ok(())
     }
 }
 
@@ -171,6 +206,8 @@ where
             .apply_blockhashes_contract_call(self.input.parent_hash, &mut self.evm)?;
         self.system_caller
             .apply_beacon_root_contract_call(self.input.parent_beacon_block_root, &mut self.evm)?;
+
+        self.deploy_corewriter_contract(self.input.number)?;
 
         Ok(())
     }
