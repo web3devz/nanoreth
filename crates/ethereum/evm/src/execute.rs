@@ -144,31 +144,6 @@ pub struct EthExecutionStrategy<'a, Evm> {
     gas_used: u64,
 }
 
-fn fetch_corewriter_enabled_block_number() -> String {
-    // Temporary, will be removed after network upgrade.
-    static LAST_FETCHED_BLOCK_NUMBER: Mutex<Option<(String, Instant)>> = Mutex::new(None);
-
-    fn fetch_inner() -> String {
-        let base_url = std::env::var("COREWRITER_ENABLED_BLOCK_NUMBER_URL").unwrap_or_else(|_| "https://sprites0.github.io/temp-block-number/".to_string());
-        let url = format!("{}?{}", base_url, Instant::now().elapsed().as_nanos());
-        let resp = ureq::get(url.clone()).call().unwrap();
-        let block_number = resp.into_body().read_to_string().unwrap();
-        info!("Fetched corewriter enabled block number: {}", block_number);
-        block_number
-    }
-
-    let mut cell = LAST_FETCHED_BLOCK_NUMBER.lock().unwrap();
-    if cell.is_none()
-        || matches!(*cell, Some((_, last_fetched_time)) if last_fetched_time.elapsed() > Duration::from_secs(1))
-    {
-        let block_number = fetch_inner();
-        *cell = Some((block_number, Instant::now()));
-    }
-
-    let (block_number, _) = cell.clone().expect("cell should be initialized above");
-    block_number
-}
-
 impl<'a, 'db, DB, E> EthExecutionStrategy<'a, E>
 where
     DB: Database + 'db,
@@ -192,24 +167,14 @@ where
     }
 
     fn deploy_corewriter_contract(&mut self, block_number: u64) -> Result<(), BlockExecutionError> {
+        const COREWRITER_ENABLED_BLOCK_NUMBER: u64 = 7578300;
         const COREWRITER_CONTRACT_ADDRESS: Address =
             address!("0x3333333333333333333333333333333333333333");
         const COREWRITER_BYTECODE: &[u8] = &hex!("608060405234801561000f575f5ffd5b5060043610610029575f3560e01c806317938e131461002d575b5f5ffd5b61004760048036038101906100429190610123565b610049565b005b5f5f90505b61019081101561006557808060010191505061004e565b503373ffffffffffffffffffffffffffffffffffffffff167f8c7f585fb295f7eb1e6aeb8fba61b23a4fe60beda405f0045073b185c74412e383836040516100ae9291906101c8565b60405180910390a25050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f8401126100e3576100e26100c2565b5b8235905067ffffffffffffffff811115610100576100ff6100c6565b5b60208301915083600182028301111561011c5761011b6100ca565b5b9250929050565b5f5f60208385031215610139576101386100ba565b5b5f83013567ffffffffffffffff811115610156576101556100be565b5b610162858286016100ce565b92509250509250929050565b5f82825260208201905092915050565b828183375f83830152505050565b5f601f19601f8301169050919050565b5f6101a7838561016e565b93506101b483858461017e565b6101bd8361018c565b840190509392505050565b5f6020820190508181035f8301526101e181848661019c565b9050939250505056fea2646970667358221220f01517e1fbaff8af4bd72cb063cccecbacbb00b07354eea7dd52265d355474fb64736f6c634300081c0033");
 
-        let corewriter_enabled_block_number: u64 = std::env::var("COREWRITER_ENABLED_BLOCK_NUMBER")
-            .unwrap_or_else(|_| fetch_corewriter_enabled_block_number())
-            .parse()
-            .unwrap();
-
-        if block_number != corewriter_enabled_block_number {
+        if block_number != COREWRITER_ENABLED_BLOCK_NUMBER {
             return Ok(());
         }
-
-        // This will stop the block number being fetched after the deployment.
-        std::env::set_var(
-            "COREWRITER_ENABLED_BLOCK_NUMBER",
-            corewriter_enabled_block_number.to_string(),
-        );
 
         let bytecode = Bytecode::new_raw(COREWRITER_BYTECODE.into());
         let account = self
