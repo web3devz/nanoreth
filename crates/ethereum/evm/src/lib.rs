@@ -22,6 +22,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::eth::EthEvmContext;
 pub use alloy_evm::EthEvm;
 use alloy_primitives::Address;
+use alloy_primitives::U160;
 use alloy_primitives::U256;
 use core::{convert::Infallible, fmt::Debug};
 use parking_lot::RwLock;
@@ -265,7 +266,18 @@ impl EvmFactory<EvmEnv> for HyperliquidEvmFactory {
             input.block_env.number,
         )
         .expect("Failed to collect a submitted block. If sourcing locally, make sure your local hl-node is producing blocks.");
-        let cache = block.read_precompile_calls;
+        let mut cache: HashMap<_, _> = block
+            .read_precompile_calls
+            .into_iter()
+            .map(|(address, calls)| (address, HashMap::from_iter(calls.into_iter())))
+            .collect();
+
+        // NOTE: Hotfix but semantically correct. Will be removed once hl-node pipeline is updated (#17)
+        if input.block_env.number >= 7000000 {
+            for i in 0x800..=0x80D {
+                cache.entry(Address::from(U160::from(i))).or_insert(HashMap::new());
+            }
+        }
 
         let evm = Context::mainnet()
             .with_db(db)
@@ -274,12 +286,7 @@ impl EvmFactory<EvmEnv> for HyperliquidEvmFactory {
             .build_mainnet_with_inspector(NoOpInspector {})
             .with_precompiles(ReplayPrecompile::new(
                 EthPrecompiles::default(),
-                Arc::new(RwLock::new(
-                    cache
-                        .into_iter()
-                        .map(|(address, calls)| (address, HashMap::from_iter(calls.into_iter())))
-                        .collect(),
-                )),
+                Arc::new(RwLock::new(cache)),
             ));
 
         EthEvm::new(evm, false)
