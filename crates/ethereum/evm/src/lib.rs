@@ -24,6 +24,7 @@ pub use alloy_evm::EthEvm;
 use alloy_primitives::Address;
 use alloy_primitives::U160;
 use alloy_primitives::U256;
+use reth_hyperliquid_types::PrecompileData;
 use core::{convert::Infallible, fmt::Debug};
 use parking_lot::RwLock;
 use reth_chainspec::{ChainSpec, EthChainSpec, MAINNET};
@@ -200,6 +201,7 @@ impl ConfigureEvmEnv for EthEvmConfig {
 pub(crate) struct BlockAndReceipts {
     #[serde(default)]
     pub read_precompile_calls: Vec<(Address, Vec<(ReadPrecompileInput, ReadPrecompileResult)>)>,
+    pub highest_precompile_address: Option<Address>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,7 +230,7 @@ pub(crate) fn collect_s3_block(ingest_path: PathBuf, height: u64) -> Option<Bloc
 pub(crate) fn get_locally_sourced_precompiles_for_height(
     precompiles_cache: PrecompilesCache,
     height: u64,
-) -> Option<Vec<(Address, Vec<(ReadPrecompileInput, ReadPrecompileResult)>)>> {
+) -> Option<PrecompileData> {
     let mut u_cache = precompiles_cache.lock();
     u_cache.remove(&height)
 }
@@ -244,7 +246,10 @@ pub(crate) fn collect_block(
         if let Some(calls) =
             get_locally_sourced_precompiles_for_height(shared_state.precompiles_cache, height)
         {
-            return Some(BlockAndReceipts { read_precompile_calls: calls });
+            return Some(BlockAndReceipts {
+                read_precompile_calls: calls.precompiles,
+                highest_precompile_address: calls.highest_precompile_address,
+            });
         }
     }
     // Fallback to s3 always

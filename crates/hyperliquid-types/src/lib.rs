@@ -18,5 +18,10 @@ pub enum ReadPrecompileResult {
     UnexpectedError,
 }
 
-pub type PrecompilesCache =
-    Arc<Mutex<BTreeMap<u64, Vec<(Address, Vec<(ReadPrecompileInput, ReadPrecompileResult)>)>>>>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrecompileData {
+    pub precompiles: Vec<(Address, Vec<(ReadPrecompileInput, ReadPrecompileResult)>)>,
+    pub highest_precompile_address: Option<Address>,
+}
+
+pub type PrecompilesCache = Arc<Mutex<BTreeMap<u64, PrecompileData>>>;

@@ -12,7 +12,7 @@ use alloy_rpc_types::engine::{
 use jsonrpsee::http_client::{transport::HttpBackend, HttpClient};
 use reth::network::PeersHandleProvider;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
-use reth_hyperliquid_types::PrecompilesCache;
+use reth_hyperliquid_types::{PrecompileData, PrecompilesCache};
 use reth_node_api::{Block, FullNodeComponents, PayloadTypes};
 use reth_node_builder::EngineTypes;
 use reth_node_builder::NodeTypesWithEngine;
@@ -191,7 +191,10 @@ impl BlockIngest {
                         let mut u_cache = cache.lock().await;
                         let mut u_pre_cache = precompiles_cache.lock();
                         for blk in new_blocks {
-                            let precompiles = blk.read_precompile_calls.clone();
+                            let precompiles = PrecompileData {
+                                precompiles: blk.read_precompile_calls.clone(),
+                                highest_precompile_address: blk.highest_precompile_address,
+                            };
                             let h = match &blk.block {
                                 EvmBlock::Reth115(b) => {
                                     let block_number = b.header().number() as u64;
