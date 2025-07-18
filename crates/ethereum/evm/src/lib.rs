@@ -21,15 +21,13 @@ use alloc::sync::Arc;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::eth::EthEvmContext;
 pub use alloy_evm::EthEvm;
-use alloy_primitives::Address;
-use alloy_primitives::U160;
-use alloy_primitives::U256;
-use reth_hyperliquid_types::PrecompileData;
+use alloy_primitives::{address, Address, U160, U256};
 use core::{convert::Infallible, fmt::Debug};
 use parking_lot::RwLock;
 use reth_chainspec::{ChainSpec, EthChainSpec, MAINNET};
 use reth_evm::Database;
 use reth_evm::{ConfigureEvm, ConfigureEvmEnv, EvmEnv, EvmFactory, NextBlockEnvAttributes};
+use reth_hyperliquid_types::PrecompileData;
 use reth_hyperliquid_types::{PrecompilesCache, ReadPrecompileInput, ReadPrecompileResult};
 use reth_node_builder::HyperliquidSharedState;
 use reth_primitives::SealedBlock;
@@ -256,6 +254,8 @@ pub(crate) fn collect_block(
     collect_s3_block(ingest_path, height)
 }
 
+const WARM_PRECOMPILES_BLOCK_NUMBER: u64 = 8_197_684;
+
 impl EvmFactory<EvmEnv> for HyperliquidEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>, EthInterpreter>> =
         EthEvm<DB, I, ReplayPrecompile<EthEvmContext<DB>>>;
@@ -277,10 +277,16 @@ impl EvmFactory<EvmEnv> for HyperliquidEvmFactory {
             .map(|(address, calls)| (address, HashMap::from_iter(calls.into_iter())))
             .collect();
 
-        // NOTE: Hotfix but semantically correct. Will be removed once hl-node pipeline is updated (#17)
-        if input.block_env.number >= 7000000 {
-            for i in 0x800..=0x80D {
-                cache.entry(Address::from(U160::from(i))).or_insert(HashMap::new());
+        if input.block_env.number >= WARM_PRECOMPILES_BLOCK_NUMBER {
+            let highest_precompile_address = block
+                .highest_precompile_address
+                .unwrap_or(address!("0x000000000000000000000000000000000000080d"));
+            for i in 0x800.. {
+                let address = Address::from(U160::from(i));
+                if address > highest_precompile_address {
+                    break;
+                }
+                cache.entry(address).or_insert(HashMap::new());
             }
         }
 
