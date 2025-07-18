@@ -27,12 +27,6 @@ use reth_primitives_traits::{transaction::signed::is_impersonated_tx, NodePrimit
 use reth_revm::{
     context_interface::result::ResultAndState, db::State, state::Bytecode, DatabaseCommit,
 };
-use std::{
-    cell::RefCell,
-    sync::Mutex,
-    time::{Duration, Instant},
-};
-use tracing::info;
 
 /// Factory for [`EthExecutionStrategy`].
 #[derive(Debug, Clone)]

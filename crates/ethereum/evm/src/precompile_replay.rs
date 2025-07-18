@@ -5,7 +5,7 @@ use reth_revm::{
     context::{Cfg, ContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{Gas, InstructionResult, InterpreterResult},
-    precompile::{PrecompileError, PrecompileErrors},
+    precompile::PrecompileErrors,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -59,7 +59,7 @@ impl<CTX: ContextTr> PrecompileProvider for ReplayPrecompile<CTX> {
             let Some(get) = precompile_calls.get(&input) else {
                 result.gas.spend_all();
                 result.result = InstructionResult::PrecompileError;
-                return Ok(Some(result))
+                return Ok(Some(result));
             };
 
             return match *get {
