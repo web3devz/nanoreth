@@ -73,8 +73,23 @@ fn scan_hour_file(path: &Path, last_line: &mut usize, start_height: u64) -> Scan
             continue;
         }
 
-        let LocalBlockAndReceipts(_block_timestamp, parsed_block): LocalBlockAndReceipts =
-            serde_json::from_str(&line).expect("Failed to parse local block and receipts");
+        let (_block_timestamp, parsed_block) = match serde_json::from_str(&line) {
+            Ok(LocalBlockAndReceipts(_block_timestamp, parsed_block)) => {
+                (_block_timestamp, parsed_block)
+            }
+            Err(_) => {
+                // Possible scenarios:
+                let is_last_line = line_idx == lines.len() - 1;
+                if is_last_line {
+                    // 1. It's not written fully yet - in this case, just wait for the next line
+                    break;
+                } else {
+                    // 2. hl-node previously terminated while writing the lines
+                    // In this case, try to skip this line
+                    continue;
+                }
+            }
+        };
 
         let height = match &parsed_block.block {
             EvmBlock::Reth115(b) => {
