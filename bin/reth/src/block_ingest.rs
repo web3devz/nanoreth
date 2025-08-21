@@ -275,12 +275,15 @@ impl BlockIngest {
         let engine_api = node.auth_server_handle().http_client();
         let mut evm_map = erc20_contract_to_spot_token(node.chain_spec().chain_id()).await?;
 
+        const MINIMUM_TIMESTAMP: u64 = 1739849780;
         let current_block_timestamp: u64 = provider
             .block_by_number(head)
             .expect("Failed to fetch current block in db")
             .expect("Block does not exist")
             .into_header()
             .timestamp();
+
+        let current_block_timestamp = current_block_timestamp.max(MINIMUM_TIMESTAMP);
 
         info!("Current height {height}, timestamp {current_block_timestamp}");
         self.start_local_ingest_loop(height, current_block_timestamp).await;
