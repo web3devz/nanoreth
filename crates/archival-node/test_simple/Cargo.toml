@@ -1,0 +1,26 @@
+[package]
+name = "simple-archival-test"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+serde_json = "1.0"
+
+[[bin]]
+name = "simple_archival_node"
+path = "simple.rs"
+
+[[bin]]
+name = "rpc_demo"
+path = "rpc_demo.rs"
+
+[[bin]]
+name = "rpc_client_test"
+path = "rpc_client_test.rs"
+
+[[bin]]
+name = "persistent_server"
+path = "persistent_server.rs"
