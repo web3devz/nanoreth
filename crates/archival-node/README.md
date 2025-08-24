@@ -1,4 +1,4 @@
-# Archival Ethereum Node
+# Archival Hyperliquid Node
 
 A modular, high-performance archival Ethereum node implementation with enhanced capabilities for historical state access, WebSocket support, and optimized proof generation.
 
