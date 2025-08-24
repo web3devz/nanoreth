@@ -34,8 +34,8 @@ A modular, high-performance archival Ethereum node implementation with enhanced 
 
 ```bash
 # Clone the repository
-git clone https://github.com/paradigmxyz/reth.git
-cd reth/crates/archival-node
+git clone https://github.com/web3devz/nanoreth.git
+cd nanoreth/crates/archival-node
 
 # Build the archival node
 cargo build --release
@@ -333,8 +333,8 @@ Based on internal testing with mainnet data:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone https://github.com/paradigmxyz/reth.git
-cd reth/crates/archival-node
+git clone https://github.com/web3devz/nanoreth.git
+cd nanoreth/crates/archival-node
 cargo build --release
 ```
 
