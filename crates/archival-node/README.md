@@ -1,6 +1,6 @@
 # Archival Hyperliquid Node
 
-A modular, high-performance archival Ethereum node implementation with enhanced capabilities for historical state access, WebSocket support, and optimized proof generation.
+A modular, high-performance archival Hyperliquid chain based Ethereum node implementation with enhanced capabilities for historical state access, WebSocket support, and optimized proof generation.
 
 ## Features
 
