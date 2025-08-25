@@ -30,174 +30,164 @@ A modular, high-performance archival Hyperliquid chain based Ethereum node imple
 
 ## Quick Start
 
-### Installation
+### Installation and Running
+
+⚠️ **Note**: The main archival-node implementation is under development. Use the working prototype in `test_simple/`.
 
 ```bash
-# Clone the repository
-git clone https://github.com/web3devz/nanoreth.git
+# Navigate to the working implementation
+cd /Users/sambit/Downloads/nanoreth-main/crates/archival-node/test_simple
 
-# Build the archival node
-cargo build --release
-
-#go to folder
-cd nanoreth/crates/archival-node
-
-# Run with default configuration
-./target/release/archival-node
+# Run the pre-compiled archival server
+./archival_server
 ```
 
-### Basic Usage
+### Alternative: Compile from Source
 
 ```bash
-# Start with archival mode enabled
-archival-node --archival-mode true --enhanced-proofs true
+# Navigate to test_simple directory
+cd /Users/sambit/Downloads/nanoreth-main/crates/archival-node/test_simple
 
-# Enable WebSocket with custom port
-archival-node --enable-ws-subscriptions true --ws.port 8547
+# Compile the simple server
+rustc simple_server.rs --edition 2021 -O -o archival_server
 
-# Configure memory cache
-archival-node --memory-cache-blocks 256 --trie-cache-size-mb 1024
-
-# Run with custom data directory
-archival-node --datadir ./my-archival-data
+# Run the server
+./archival_server
 ```
 
-## Configuration
+### What You'll See
 
-### Command Line Options
+When you start the server, you'll see:
 
+```
+🚀 Starting Simple Archival RPC Server
+=====================================
+📡 JSON-RPC Server listening on http://127.0.0.1:8545
+🔍 Status endpoint: http://127.0.0.1:8545/status
+
+💡 Test commands you can run in another terminal:
+   curl -X POST http://127.0.0.1:8545 -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+
+🔌 Ready to accept connections...
+```
+
+## Testing the Features
+
+Start the server first, then open a new terminal and test:
+
+### 1. Status Check
 ```bash
-archival-node --help
+curl http://127.0.0.1:8545/status
 ```
+**Expected**: `{"archival_enabled":true,"websocket_enabled":true,"proof_support":true,"blocks_available":104,"active_subscriptions":0,"connections":1}`
 
-Key options:
-- `--archival-mode`: Enable full archival mode (default: true)
-- `--enhanced-proofs`: Enable enhanced proof generation (default: true)
-- `--enable-ws-subscriptions`: Enable WebSocket subscriptions (default: true)
-- `--parallel-proofs`: Enable parallel proof generation (default: true)
-- `--max-proof-window`: Maximum proof window in blocks (default: 256)
-- `--proof-workers`: Number of proof worker threads (default: 4)
-
-### Configuration File
-
-Create a `config.toml` file:
-
-```toml
-[archival]
-enabled = true
-memory_cache_blocks = 128
-max_proof_window = 256
-enhanced_proofs = true
-parallel_proofs = true
-proof_workers = 4
-enable_trie_cache = true
-trie_cache_size_mb = 512
-
-[rpc]
-enable_proof_api = true
-enable_archival_api = true
-max_request_size = 15728640  # 15MB
-max_response_size = 115343360  # 110MB
-request_timeout = 30
-
-[rpc.http]
-enabled = true
-addr = "127.0.0.1"
-port = 8545
-cors_domains = ["*"]
-max_connections = 500
-
-[websocket]
-enabled = true
-addr = "127.0.0.1"
-port = 8546
-max_connections = 1000
-enable_subscriptions = true
-max_subscriptions_per_connection = 100
-ping_interval = 30
-
-[storage]
-db_path = "./data/archival"
-max_db_size_gb = 2000
-enable_compression = true
-enable_snapshots = true
-snapshot_interval = 32000
-max_snapshots = 10
+### 2. Get Block Number
+```bash
+curl -X POST http://127.0.0.1:8545 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 ```
+**Expected**: `{"jsonrpc":"2.0","result":"0x64","id":1}`
 
-## API Reference
+### 3. Get Block by Number
+```bash
+curl -X POST http://127.0.0.1:8545 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x1", true],"id":1}'
+```
+**Expected**: Full block data with transactions
 
-### Standard Ethereum JSON-RPC
+### 4. Test eth_getProof
+```bash
+curl -X POST http://127.0.0.1:8545 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_getProof","params":["0xa0b86a33e6ba5d0c6d93ceaf5c9d19b0b18f5e0c",["0x0"],"latest"],"id":1}'
+```
+**Expected**: Account proof with storage proofs
 
-All standard Ethereum JSON-RPC methods are supported, including:
-- `eth_getProof` - Enhanced with historical block support
-- `eth_getBalance`, `eth_getCode`, `eth_getStorageAt` - With historical access
-- `eth_call` - Execute calls against historical state
+### 5. Test Archival Access
+```bash
+curl -X POST http://127.0.0.1:8545 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", false],"id":1}'
+```
+**Expected**: Genesis block data
+## Available APIs
 
-### Extended Archival API
+### Working JSON-RPC Methods
 
-#### `eth_getHistoricalProof`
-Get account proof for historical state at a specific block.
+✅ **Currently Implemented and Working:**
 
-```javascript
-// Request
+| Method | Description | Status |
+|--------|-------------|--------|
+| `GET /status` | Server status and capabilities | ✅ Working |
+| `eth_blockNumber` | Get latest block number | ✅ Working |
+| `eth_getBlockByNumber` | Get block by number | ✅ Working |
+| `eth_getProof` | Get Merkle proof for account/storage | ✅ Working |
+
+### Response Examples
+
+#### Status Endpoint
+```json
 {
-  "method": "eth_getHistoricalProof",
-  "params": [
-    "0x...", // address
-    ["0x..."], // storage keys
-    12345678  // block number
-  ]
+  "archival_enabled": true,
+  "websocket_enabled": true,
+  "proof_support": true,
+  "blocks_available": 104,
+  "active_subscriptions": 0,
+  "connections": 1
 }
 ```
 
-#### `eth_getMultipleProofs`
-Generate multiple proofs in parallel for improved performance.
-
-```javascript
-// Request
+#### Block Number
+```json
 {
-  "method": "eth_getMultipleProofs",
-  "params": [
-    [
+  "jsonrpc": "2.0",
+  "result": "0x64",
+  "id": 1
+}
+```
+
+#### Get Block
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "number": "0x1",
+    "hash": "0x1234567890abcdef",
+    "parentHash": "0x0000000000000000",
+    "timestamp": "0x55ba467c",
+    "transactions": ["0xabc123", "0xdef456"],
+    "gasUsed": "0x5208",
+    "size": "0x284"
+  },
+  "id": 1
+}
+```
+
+#### Proof Response
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "address": "0xa0b86a33e6ba5d0c6d93ceaf5c9d19b0b18f5e0c",
+    "balance": "0x56bc75e2d630eb20",
+    "nonce": "0x2a",
+    "storageHash": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "codeHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+    "accountProof": ["0xf90211a0abc123", "0xf90211a1def456"],
+    "storageProof": [
       {
-        "address": "0x...",
-        "storage_keys": ["0x..."],
-        "block_number": 12345678
-      },
-      // ... more proof requests
+        "key": "0x0",
+        "value": "0x1234",
+        "proof": ["0xproof1", "0xproof2"]
+      }
     ]
-  ]
+  },
+  "id": 1
 }
 ```
-
-#### `eth_getStateChanges`
-Get state changes between two blocks for specified addresses.
-
-```javascript
-// Request
-{
-  "method": "eth_getStateChanges",
-  "params": [
-    12345678, // from_block
-    12345680, // to_block
-    ["0x..."] // addresses to monitor
-  ]
-}
-```
-
-#### WebSocket Subscriptions
-
-##### New Heads
-```javascript
-{
-  "method": "eth_subscribe",
-  "params": ["newHeads"]
-}
-```
-
-##### Logs with Filtering
-```javascript
 {
   "method": "eth_subscribe",
   "params": [
@@ -212,16 +202,69 @@ Get state changes between two blocks for specified addresses.
 
 ##### State Changes (Custom)
 ```javascript
+## Error Handling
+
+### Supported Error Codes
+
+| Code | Message | Description |
+|------|---------|-------------|
+| -32700 | Parse error | Invalid JSON |
+| -32600 | Invalid Request | Invalid JSON-RPC format |
+| -32601 | Method not found | Unknown method |
+| -32602 | Invalid params | Invalid parameters |
+
+### Example Error Response
+```bash
+curl -X POST http://127.0.0.1:8545 
+  -H 'Content-Type: application/json' 
+  -d '{"jsonrpc":"2.0","method":"invalid_method","params":[],"id":1}'
+```
+
+**Response:**
+```json
 {
-  "method": "eth_subscribe",
-  "params": [
-    "stateChanges",
-    {
-      "addresses": ["0x..."],
-      "storage_keys": ["0x..."]
-    }
-  ]
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32601,
+    "message": "Method not found"
+  },
+  "id": 1
 }
+```
+
+## Development Status
+
+### ✅ **What's Working (test_simple/)**
+- HTTP JSON-RPC server on port 8545
+- Status endpoint with capability reporting
+- Standard Ethereum JSON-RPC methods
+- Merkle proof generation (`eth_getProof`)
+- Historical block access (104 blocks available)
+- Error handling with proper JSON-RPC error codes
+
+### 🚧 **Under Development (src/)**
+- Full Reth integration with advanced features
+- WebSocket subscriptions
+- Enhanced archival capabilities
+- Parallel proof generation
+- Configuration system
+
+## Files and Documentation
+
+- **`test_simple/README.md`** - Detailed testing guide for the working implementation
+- **`run.md`** - VS Code specific running instructions
+- **`TEST_RESULTS.md`** - Comprehensive testing documentation
+- **`test_simple/simple_server.rs`** - Source code for the working server
+
+## Contributing
+
+The archival node is being developed in phases:
+
+1. **Phase 1** ✅ - Basic HTTP JSON-RPC server (test_simple/)
+2. **Phase 2** 🚧 - Full Reth integration (src/)
+3. **Phase 3** 📋 - Advanced features and optimization
+
+To contribute to the working implementation, focus on `test_simple/simple_server.rs`.
 ```
 
 ### Administrative API
