@@ -35,10 +35,12 @@ A modular, high-performance archival Hyperliquid chain based Ethereum node imple
 ```bash
 # Clone the repository
 git clone https://github.com/web3devz/nanoreth.git
-cd nanoreth/crates/archival-node
 
 # Build the archival node
 cargo build --release
+
+#go to folder
+cd nanoreth/crates/archival-node
 
 # Run with default configuration
 ./target/release/archival-node
