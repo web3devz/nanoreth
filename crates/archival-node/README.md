@@ -36,7 +36,7 @@ A modular, high-performance archival Hyperliquid chain based Ethereum node imple
 
 ```bash
 # Navigate to the working implementation
-cd /Users/sambit/Downloads/nanoreth-main/crates/archival-node/test_simple
+cd crates/archival-node/test_simple
 
 # Run the pre-compiled archival server
 ./archival_server
@@ -46,7 +46,7 @@ cd /Users/sambit/Downloads/nanoreth-main/crates/archival-node/test_simple
 
 ```bash
 # Navigate to test_simple directory
-cd /Users/sambit/Downloads/nanoreth-main/crates/archival-node/test_simple
+cd crates/archival-node/test_simple
 
 # Compile the simple server
 rustc simple_server.rs --edition 2021 -O -o archival_server
